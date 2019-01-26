@@ -5,6 +5,7 @@
 # Add inputs and outputs from these tool invocations to the build variables 
 C_SRCS += \
 ../Src/libs/collections/src/lbq.c \
+../Src/libs/collections/src/lbq8.c \
 ../Src/libs/collections/src/list.c \
 ../Src/libs/collections/src/map.c \
 ../Src/libs/collections/src/map2.c \
@@ -12,6 +13,7 @@ C_SRCS += \
 
 OBJS += \
 ./Src/libs/collections/src/lbq.o \
+./Src/libs/collections/src/lbq8.o \
 ./Src/libs/collections/src/list.o \
 ./Src/libs/collections/src/map.o \
 ./Src/libs/collections/src/map2.o \
@@ -19,6 +21,7 @@ OBJS += \
 
 C_DEPS += \
 ./Src/libs/collections/src/lbq.d \
+./Src/libs/collections/src/lbq8.d \
 ./Src/libs/collections/src/list.d \
 ./Src/libs/collections/src/map.d \
 ./Src/libs/collections/src/map2.d \

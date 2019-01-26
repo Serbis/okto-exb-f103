@@ -8,6 +8,7 @@ void enqueue(void *self, void *item) {
     Node *node = pmalloc(sizeof(Node));
 
     MutexLock(this->mutex);
+    TickType_t taw = xTaskGetTickCount();
 
     node->item = item;
     node->next = NULL;
@@ -23,6 +24,8 @@ void enqueue(void *self, void *item) {
     this->count = (uint16_t) (this->count + 1);
 
     MutexUnlock(this->mutex);
+    if (xTaskGetTickCount() != taw)
+       	taskYIELD();
 }
 
 
@@ -30,6 +33,7 @@ void* dequeue(void *self) {
     LinkedBlockingQueue *this = (LinkedBlockingQueue*) self;
 
     MutexLock(this->mutex);
+    TickType_t taw = xTaskGetTickCount();
 
     if (this->head != NULL) {
         Node *head = this->head;
@@ -47,9 +51,13 @@ void* dequeue(void *self) {
 
         this->count = (uint16_t) (this->count - 1);
         MutexUnlock(this->mutex);
+        if (xTaskGetTickCount() != taw)
+           	taskYIELD();
         return item;
     } else {
         MutexUnlock(this->mutex);
+        if (xTaskGetTickCount() != taw)
+           	taskYIELD();
         return NULL;
     }
 }
@@ -57,8 +65,11 @@ void* dequeue(void *self) {
 uint16_t size(void *self) {
     LinkedBlockingQueue *this = (LinkedBlockingQueue*) self;
     MutexLock(this->mutex);
+    TickType_t taw = xTaskGetTickCount();
     uint16_t size = this->count;
     MutexUnlock(this->mutex);
+    if (xTaskGetTickCount() != taw)
+       	taskYIELD();
     return size;
 
 }

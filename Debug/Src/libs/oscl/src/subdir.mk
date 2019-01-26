@@ -7,6 +7,7 @@ C_SRCS += \
 ../Src/libs/oscl/src/data.c \
 ../Src/libs/oscl/src/hardware.c \
 ../Src/libs/oscl/src/malloc.c \
+../Src/libs/oscl/src/std.c \
 ../Src/libs/oscl/src/threads.c \
 ../Src/libs/oscl/src/time.c \
 ../Src/libs/oscl/src/utils.c 
@@ -15,6 +16,7 @@ OBJS += \
 ./Src/libs/oscl/src/data.o \
 ./Src/libs/oscl/src/hardware.o \
 ./Src/libs/oscl/src/malloc.o \
+./Src/libs/oscl/src/std.o \
 ./Src/libs/oscl/src/threads.o \
 ./Src/libs/oscl/src/time.o \
 ./Src/libs/oscl/src/utils.o 
@@ -23,6 +25,7 @@ C_DEPS += \
 ./Src/libs/oscl/src/data.d \
 ./Src/libs/oscl/src/hardware.d \
 ./Src/libs/oscl/src/malloc.d \
+./Src/libs/oscl/src/std.d \
 ./Src/libs/oscl/src/threads.d \
 ./Src/libs/oscl/src/time.d \
 ./Src/libs/oscl/src/utils.d 

@@ -22,6 +22,7 @@ Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM3 \
 Middlewares/Third_Party/FreeRTOS/Source/portable/MemMang \
 Src \
 Src/libs/collections/src \
+Src/libs/misc/src \
 Src/libs/oscl/src \
 startup \
 

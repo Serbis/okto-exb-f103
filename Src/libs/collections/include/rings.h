@@ -9,12 +9,21 @@
 #define LIBS_RINGS_H_ 1
 
 #include <stdint.h>
+#include <stdbool.h>
 
+//#define RINGS_PTHREADS
+#define RINGS_FREERTOS
 
 
 /** Политика переполнения, при которой ридер будет сдвигатья вправо затирая
  * не считанные данные */
 #define RINGS_OVERFLOW_SHIFT 0
+
+#ifdef RINGS_FREERTOS
+
+#include "cmsis_os.h"
+
+#endif
 
 /** Определение кольцевого буфера */
 typedef struct {
@@ -23,10 +32,17 @@ typedef struct {
     uint16_t writer;
     uint16_t size;
     uint8_t overflowPolitics;
+    bool lock;
+	#ifdef RINGS_FREERTOS
+    xSemaphoreHandle mutex;
+	#endif
+	#ifdef RINGS_PTHREADS
+    pthread_mutex_t *mutex;
+	#endif
 } RingBufferDef;
 
 
-RingBufferDef* RINGS_createRingBuffer(uint16_t size, uint8_t overflowPolitics, uint8_t portMalloc);
+RingBufferDef* RINGS_createRingBuffer(uint16_t size, uint8_t overflowPolitics, bool lock);
 void RINGS_Free(RingBufferDef* rbd);
 uint8_t RINGS_read(RingBufferDef* rbd);
 uint8_t RINGS_write(uint8_t byte, RingBufferDef* rbd);

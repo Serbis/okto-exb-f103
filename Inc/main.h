@@ -10,7 +10,7 @@
   * inserted by the user or by software development tools
   * are owned by their respective copyright owners.
   *
-  * Copyright (c) 2018 STMicroelectronics International N.V. 
+  * Copyright (c) 2019 STMicroelectronics International N.V. 
   * All rights reserved.
   *
   * Redistribution and use in source and binary forms, with or without 
@@ -59,6 +59,74 @@
 
 /* Private define ------------------------------------------------------------*/
 
+#define G0_o_Pin GPIO_PIN_13
+#define G0_o_GPIO_Port GPIOC
+#define G1_o_Pin GPIO_PIN_14
+#define G1_o_GPIO_Port GPIOC
+#define G2_o_Pin GPIO_PIN_15
+#define G2_o_GPIO_Port GPIOC
+#define G3_a_o_Pin GPIO_PIN_0
+#define G3_a_o_GPIO_Port GPIOA
+#define G4_a_o_Pin GPIO_PIN_1
+#define G4_a_o_GPIO_Port GPIOA
+#define G5_a_o_Pin GPIO_PIN_2
+#define G5_a_o_GPIO_Port GPIOA
+#define G6_a_o_Pin GPIO_PIN_3
+#define G6_a_o_GPIO_Port GPIOA
+#define G7_a_o_Pin GPIO_PIN_4
+#define G7_a_o_GPIO_Port GPIOA
+#define G8_a_o_Pin GPIO_PIN_5
+#define G8_a_o_GPIO_Port GPIOA
+#define G9_a_o_Pin GPIO_PIN_6
+#define G9_a_o_GPIO_Port GPIOA
+#define G10_a_o_Pin GPIO_PIN_7
+#define G10_a_o_GPIO_Port GPIOA
+#define G11_a_o_Pin GPIO_PIN_0
+#define G11_a_o_GPIO_Port GPIOB
+#define G12_a_o_Pin GPIO_PIN_1
+#define G12_a_o_GPIO_Port GPIOB
+#define G13_o_Pin GPIO_PIN_2
+#define G13_o_GPIO_Port GPIOB
+#define G14_o_Pin GPIO_PIN_10
+#define G14_o_GPIO_Port GPIOB
+#define G15_o_Pin GPIO_PIN_11
+#define G15_o_GPIO_Port GPIOB
+#define G16_o_Pin GPIO_PIN_12
+#define G16_o_GPIO_Port GPIOB
+#define G17_o_Pin GPIO_PIN_13
+#define G17_o_GPIO_Port GPIOB
+#define G18_o_Pin GPIO_PIN_14
+#define G18_o_GPIO_Port GPIOB
+#define G19_o_Pin GPIO_PIN_15
+#define G19_o_GPIO_Port GPIOB
+#define G20_o_Pin GPIO_PIN_8
+#define G20_o_GPIO_Port GPIOA
+#define UART_TX_Pin GPIO_PIN_9
+#define UART_TX_GPIO_Port GPIOA
+#define UART_RX_Pin GPIO_PIN_10
+#define UART_RX_GPIO_Port GPIOA
+#define G21_o_Pin GPIO_PIN_11
+#define G21_o_GPIO_Port GPIOA
+#define G22_o_Pin GPIO_PIN_12
+#define G22_o_GPIO_Port GPIOA
+#define BUTTON_Pin GPIO_PIN_15
+#define BUTTON_GPIO_Port GPIOA
+#define BUTTON_EXTI_IRQn EXTI15_10_IRQn
+#define NRF_SCK_Pin GPIO_PIN_3
+#define NRF_SCK_GPIO_Port GPIOB
+#define NRF_MISO_Pin GPIO_PIN_4
+#define NRF_MISO_GPIO_Port GPIOB
+#define NRF_MOSI_Pin GPIO_PIN_5
+#define NRF_MOSI_GPIO_Port GPIOB
+#define NRF_CS_Pin GPIO_PIN_6
+#define NRF_CS_GPIO_Port GPIOB
+#define NRF_IRQ_Pin GPIO_PIN_7
+#define NRF_IRQ_GPIO_Port GPIOB
+#define NRF_CE_Pin GPIO_PIN_8
+#define NRF_CE_GPIO_Port GPIOB
+#define LED_Pin GPIO_PIN_9
+#define LED_GPIO_Port GPIOB
+
 /* ########################## Assert Selection ############################## */
 /**
   * @brief Uncomment the line below to expanse the "assert_param" macro in the 
@@ -67,6 +135,8 @@
 /* #define USE_FULL_ASSERT    1U */
 
 /* USER CODE BEGIN Private defines */
+
+
 
 /* USER CODE END Private defines */
 

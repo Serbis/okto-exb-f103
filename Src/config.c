@@ -17,6 +17,8 @@ Config* Config_Load(uint16_t address) {
 		cfg->magic = CONFIG_MAGIC;
 		cfg->adc_filtration_count = 2048;
 		cfg->adc_filtration_delay = 0;
+		cfg->a_self = 0xAAAAAA01;
+		cfg->a_master = 0xAAAAAAA1;
 	}
 
 	return cfg;
@@ -30,4 +32,12 @@ bool Config_Write(uint16_t address, Config *config) {
 	taskEXIT_CRITICAL();
 
 	return r;
+}
+
+/** Weret configuration be erease magic */
+void Config_Reset(uint16_t address) {
+	uint64_t nol = 0UL;
+	taskENTER_CRITICAL();
+	EE_Writes(address, 2, &nol);
+	taskEXIT_CRITICAL();
 }

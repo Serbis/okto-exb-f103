@@ -8,15 +8,40 @@
 /**
  * Реализация кольцевого буфера
  *
- * Версия: 5
+ * Версия: 10
  *
  */
 
-//#include "rings.h"
-#include <malloc.h>
 #include <string.h>
 #include "../include/rings.h"
-#include "../../oscl/include/malloc.h"
+
+#ifdef RINGS_FREERTOS
+
+#include "stdlibo.h"
+
+void RINGS_mutexLock(xSemaphoreHandle mutex) {
+	xSemaphoreTake(mutex, portMAX_DELAY);
+}
+
+void RINGS_mutexUnLock(xSemaphoreHandle mutex) {
+	xSemaphoreGive(mutex);
+}
+
+#endif
+
+#ifdef RINGS_PTHREADS
+
+void RINGS_mutexLock(pthread_mutex_t *mutex) {
+	pthread_mutex_lock(mutex);
+}
+
+void RINGS_mutexUnLock(pthread_mutex_t *mutex) {
+	pthread_mutex_unlock(mutex);
+}
+
+#endif
+
+
 
 
 /**
@@ -26,24 +51,29 @@
  * @param portMalloc 1 для использования менеджера памяти уровня ос
  * @return указатель на определение кольцевого буфера
  */
-RingBufferDef* RINGS_createRingBuffer(uint16_t size, uint8_t overflowPolitics, uint8_t portMalloc) {
+RingBufferDef* RINGS_createRingBuffer(uint16_t size, uint8_t overflowPolitics, bool lock) {
 	RingBufferDef *rbd;
 	uint8_t *buffer;
 
+	rbd = (RingBufferDef*) malloc(sizeof(RingBufferDef));
+	buffer = (uint8_t*) malloc(size);
 
-	if (portMalloc == 0) {
-		rbd = (RingBufferDef*) malloc(sizeof(RingBufferDef));
-		buffer = (uint8_t*) malloc(size);
-	} else {
-		rbd = (RingBufferDef*) pmalloc(sizeof(RingBufferDef));
-		buffer = (uint8_t*) pmalloc(size);
-	}
 
 	rbd->buffer = buffer;
 	rbd->reader = 0;
 	rbd->writer = 0;
     rbd->size = size;
+
+	#ifdef RINGS_FREERTOS
+    rbd->mutex = xSemaphoreCreateMutex();;
+	#endif
+	#ifdef RINGS_PTHREADS
+    pthread_mutex_t *mutex = malloc(sizeof(pthread_mutex_t));
+    pthread_mutex_init(mutex, NULL);
+    rbd->mutex = mutex;
+	#endif
     rbd->overflowPolitics = overflowPolitics;
+    rbd->lock = lock;
 
 	return rbd;
 }
@@ -54,7 +84,7 @@ RingBufferDef* RINGS_createRingBuffer(uint16_t size, uint8_t overflowPolitics, u
  * @param rbd определение кольца
  */
 void RINGS_Free(RingBufferDef* rbd) {
-	pfree(rbd->buffer);
+	free(rbd->buffer);
 }
 
 /**
@@ -64,6 +94,14 @@ void RINGS_Free(RingBufferDef* rbd) {
  * @return считанный байт
  */
 uint8_t RINGS_read(RingBufferDef* rbd) {
+	if (rbd->lock)
+		RINGS_mutexLock(rbd->mutex);
+	#ifdef RINGS_FREERTOS
+	TickType_t taw = 0;
+	if (rbd->lock)
+		taw = xTaskGetTickCount();
+	#endif
+
 	uint8_t b = *(rbd->buffer + rbd->reader);
     if (rbd->reader == rbd->size -1) {
         rbd->reader = 0;
@@ -71,8 +109,13 @@ uint8_t RINGS_read(RingBufferDef* rbd) {
         if (rbd->reader != rbd->writer)
             rbd->reader++;
     }
-
-
+    if (rbd->lock) {
+    	RINGS_mutexUnLock(rbd->mutex);
+    	#ifdef RINGS_FREERTOS
+    	if (xTaskGetTickCount() != taw)
+    		taskYIELD();
+		#endif
+    }
 	return b;
 }
 
@@ -84,6 +127,14 @@ uint8_t RINGS_read(RingBufferDef* rbd) {
  * @return количество записанных байт (в рамках функции всегда равно 1)
  */
 uint8_t RINGS_write(uint8_t byte, RingBufferDef* rbd) {
+	if (rbd->lock)
+		RINGS_mutexLock(rbd->mutex);
+	#ifdef RINGS_FREERTOS
+	TickType_t taw = 0;
+	if (rbd->lock)
+		taw = xTaskGetTickCount();
+	#endif
+
 	*(rbd->buffer + rbd->writer) = byte;
     if (rbd->writer == rbd->size -1) {
         if (rbd->reader == 0) {
@@ -115,6 +166,14 @@ uint8_t RINGS_write(uint8_t byte, RingBufferDef* rbd) {
         rbd->writer++;
     }
 
+    if (rbd->lock) {
+    	RINGS_mutexUnLock(rbd->mutex);
+    	#ifdef RINGS_FREERTOS
+    	if (xTaskGetTickCount() != taw)
+    		taskYIELD();
+		#endif
+    }
+
 	return 1;
 }
 
@@ -127,9 +186,25 @@ uint8_t RINGS_write(uint8_t byte, RingBufferDef* rbd) {
  * @return количество записанных в буфер байт
  */
 uint8_t RINGS_writeArray(uint8_t *array, uint16_t size, RingBufferDef* rbd) {
+	if (rbd->lock)
+		RINGS_mutexLock(rbd->mutex);
+	#ifdef RINGS_FREERTOS
+	TickType_t taw = 0;
+	if (rbd->lock)
+		taw = xTaskGetTickCount();
+	#endif
+
 	for (int i = 0; i < size; i++) {
 		RINGS_write(*(array + i), rbd);
 	}
+
+    if (rbd->lock) {
+    	RINGS_mutexUnLock(rbd->mutex);
+    	#ifdef RINGS_FREERTOS
+    	if (xTaskGetTickCount() != taw)
+    		taskYIELD();
+		#endif
+    }
 
 	return size;
 }
@@ -142,13 +217,33 @@ uint8_t RINGS_writeArray(uint8_t *array, uint16_t size, RingBufferDef* rbd) {
  * @return количество перенесенных байт
  */
 uint16_t RINGS_readAll(uint8_t *buff, RingBufferDef* rbd) {
+	if (rbd->lock)
+		RINGS_mutexLock(rbd->mutex);
+	#ifdef RINGS_FREERTOS
+	TickType_t taw = 0;
+	if (rbd->lock)
+		taw = xTaskGetTickCount();
+	#endif
+
 	uint16_t p = 0;
 
 	while (rbd->reader != rbd->writer) {
 		*(buff + p) = *(rbd->buffer + rbd->reader);
-		rbd->reader++;
 		p++;
+		if (rbd->reader > rbd->size - 2) {
+			rbd->reader = 0;
+		} else {
+			rbd->reader++;
+		}
 	}
+
+    if (rbd->lock) {
+    	RINGS_mutexUnLock(rbd->mutex);
+    	#ifdef RINGS_FREERTOS
+    	if (xTaskGetTickCount() != taw)
+    		taskYIELD();
+		#endif
+    }
 
 	return p;
 }
@@ -162,12 +257,28 @@ uint16_t RINGS_readAll(uint8_t *buff, RingBufferDef* rbd) {
  * @return указатель на созданную строку
  */
 char* RINGS_readString(uint16_t lenght, RingBufferDef* rbd) {
+	if (rbd->lock)
+		RINGS_mutexLock(rbd->mutex);
+	#ifdef RINGS_FREERTOS
+	TickType_t taw = 0;
+	if (rbd->lock)
+		taw = xTaskGetTickCount();
+	#endif
+
 	uint16_t strSize = rbd->writer - rbd->reader + 1;
-	char* str = (char*) pmalloc(strSize);
+	char* str = (char*) malloc(strSize);
 	memcpy(str, (uint8_t*) (rbd->buffer + rbd->reader), strSize - 1);
 	*(str + strSize - 1) = 0;
 
 	rbd->reader = rbd->writer;
+
+    if (rbd->lock) {
+    	RINGS_mutexUnLock(rbd->mutex);
+    	#ifdef RINGS_FREERTOS
+    	if (xTaskGetTickCount() != taw)
+    		taskYIELD();
+		#endif
+    }
 
 	return str;
 }
@@ -183,7 +294,15 @@ char* RINGS_readString(uint16_t lenght, RingBufferDef* rbd) {
  * @return указатель на созданную строку
  */
 char* RINGS_readStringInRange(uint16_t start, uint16_t lenght, RingBufferDef* rbd) {
-	char* str = (char*) pmalloc(lenght + 1);
+	if (rbd->lock)
+		RINGS_mutexLock(rbd->mutex);
+	#ifdef RINGS_FREERTOS
+	TickType_t taw = 0;
+	if (rbd->lock)
+		taw = xTaskGetTickCount();
+	#endif
+
+	char* str = (char*) malloc(lenght + 1);
 	uint16_t count = 0;
 	uint16_t ptr = start;
 
@@ -201,6 +320,14 @@ char* RINGS_readStringInRange(uint16_t start, uint16_t lenght, RingBufferDef* rb
 
 	*(str + lenght) = 0;
 
+    if (rbd->lock) {
+    	RINGS_mutexUnLock(rbd->mutex);
+    	#ifdef RINGS_FREERTOS
+    	if (xTaskGetTickCount() != taw)
+    		taskYIELD();
+		#endif
+    }
+
 	return str;
 
 }
@@ -212,6 +339,34 @@ char* RINGS_readStringInRange(uint16_t start, uint16_t lenght, RingBufferDef* rb
  * @return количество байт
  */
 uint16_t RINGS_dataLenght(RingBufferDef* rbd) {
+	if (rbd->lock)
+		RINGS_mutexLock(rbd->mutex);
+	#ifdef RINGS_FREERTOS
+	TickType_t taw = 0;
+	if (rbd->lock)
+		taw = xTaskGetTickCount();
+	#endif
+
+	if (rbd->writer < rbd->reader) {
+	    if (rbd->lock) {
+	    	RINGS_mutexUnLock(rbd->mutex);
+	    	#ifdef RINGS_FREERTOS
+	    	if (xTaskGetTickCount() != taw)
+	    		taskYIELD();
+			#endif
+	    }
+
+		return rbd->size - rbd->reader + rbd->writer;
+	}
+
+    if (rbd->lock) {
+    	RINGS_mutexUnLock(rbd->mutex);
+    	#ifdef RINGS_FREERTOS
+    	if (xTaskGetTickCount() != taw)
+    		taskYIELD();
+		#endif
+    }
+
 	return rbd->writer - rbd->reader;
 }
 
@@ -222,7 +377,25 @@ uint16_t RINGS_dataLenght(RingBufferDef* rbd) {
  * @return указатель на начало блока данных
  */
 uint8_t* RINGS_dataStart(RingBufferDef* rbd) {
-	return rbd->buffer + rbd->reader;
+	if (rbd->lock)
+		RINGS_mutexLock(rbd->mutex);
+	#ifdef RINGS_FREERTOS
+	TickType_t taw = 0;
+	if (rbd->lock)
+		taw = xTaskGetTickCount();
+	#endif
+
+	uint8_t *p = rbd->buffer + rbd->reader;
+
+    if (rbd->lock) {
+    	RINGS_mutexUnLock(rbd->mutex);
+    	#ifdef RINGS_FREERTOS
+    	if (xTaskGetTickCount() != taw)
+    		taskYIELD();
+		#endif
+    }
+
+    return p;
 }
 
 
@@ -233,7 +406,23 @@ uint8_t* RINGS_dataStart(RingBufferDef* rbd) {
  * @param rbd определение кольца
  */
 void RINGS_dataClear(RingBufferDef* rbd) {
+	if (rbd->lock)
+		RINGS_mutexLock(rbd->mutex);
+	#ifdef RINGS_FREERTOS
+	TickType_t taw = 0;
+	if (rbd->lock)
+		taw = xTaskGetTickCount();
+	#endif
+
 	rbd->reader = rbd->writer;
+
+    if (rbd->lock) {
+    	RINGS_mutexUnLock(rbd->mutex);
+    	#ifdef RINGS_FREERTOS
+    	if (xTaskGetTickCount() != taw)
+    		taskYIELD();
+		#endif
+    }
 }
 
 /**
@@ -243,11 +432,26 @@ void RINGS_dataClear(RingBufferDef* rbd) {
  * @param rbd определение кольца
  */
 void RINGS_dataClearFull(RingBufferDef* rbd) {
+	if (rbd->lock)
+		RINGS_mutexLock(rbd->mutex);
+	#ifdef RINGS_FREERTOS
+	TickType_t taw = 0;
+	if (rbd->lock)
+		taw = xTaskGetTickCount();
+	#endif
+
 	rbd->reader = 0;
 	rbd->writer = 0;
 
     for (int i = 0; i < rbd->size - 1; i++) {
     	*(rbd->buffer + i) = 0;
+    }
+    if (rbd->lock) {
+    	RINGS_mutexUnLock(rbd->mutex);
+    	#ifdef RINGS_FREERTOS
+    	if (xTaskGetTickCount() != taw)
+    		taskYIELD();
+		#endif
     }
 }
 
@@ -258,7 +462,22 @@ void RINGS_dataClearFull(RingBufferDef* rbd) {
  * @param rbd определение кольца
  */
 void RINGS_dataClearBySize(uint16_t size, RingBufferDef* rbd) {
+	if (rbd->lock)
+		RINGS_mutexLock(rbd->mutex);
+	#ifdef RINGS_FREERTOS
+	TickType_t taw = 0;
+	if (rbd->lock)
+		taw = xTaskGetTickCount();
+	#endif
+
 	rbd->reader = rbd->reader + size;
+    if (rbd->lock) {
+    	RINGS_mutexUnLock(rbd->mutex);
+    	#ifdef RINGS_FREERTOS
+    	if (xTaskGetTickCount() != taw)
+    		taskYIELD();
+		#endif
+    }
 }
 
 /**
@@ -274,6 +493,14 @@ void RINGS_dataClearBySize(uint16_t size, RingBufferDef* rbd) {
  * @param rbd определение кольца
  */
 uint8_t RINGS_getByShiftFromWriter(int32_t shift, RingBufferDef* rbd) {
+	if (rbd->lock)
+		RINGS_mutexLock(rbd->mutex);
+	#ifdef RINGS_FREERTOS
+	TickType_t taw = 0;
+	if (rbd->lock)
+		taw = xTaskGetTickCount();
+	#endif
+
     if (shift > 0) { //Если искомы байт находится впереди от райтера
         uint16_t ns = shift;
         uint16_t ptr = rbd->writer;
@@ -284,6 +511,14 @@ uint8_t RINGS_getByShiftFromWriter(int32_t shift, RingBufferDef* rbd) {
                 ptr++;
             }
             ns--;
+        }
+
+        if (rbd->lock) {
+        	RINGS_mutexUnLock(rbd->mutex);
+        	#ifdef RINGS_FREERTOS
+        	if (xTaskGetTickCount() != taw)
+        		taskYIELD();
+    		#endif
         }
 
         return *(rbd->buffer + ptr);
@@ -300,9 +535,23 @@ uint8_t RINGS_getByShiftFromWriter(int32_t shift, RingBufferDef* rbd) {
             ns++;
         }
 
+        if (rbd->lock) {
+        	RINGS_mutexUnLock(rbd->mutex);
+        	#ifdef RINGS_FREERTOS
+        	if (xTaskGetTickCount() != taw)
+        		taskYIELD();
+    		#endif
+        }
         return *(rbd->buffer + ptr);
 
     } else { //Если смещение равно нулю
+        if (rbd->lock) {
+        	RINGS_mutexUnLock(rbd->mutex);
+        	#ifdef RINGS_FREERTOS
+        	if (xTaskGetTickCount() != taw)
+        		taskYIELD();
+    		#endif
+        }
         return *(rbd->buffer + rbd->writer);
     }
 }
@@ -316,6 +565,14 @@ uint8_t RINGS_getByShiftFromWriter(int32_t shift, RingBufferDef* rbd) {
  * @param rbd определение кольца
  */
 uint8_t RINGS_getByShiftFromReader(int32_t shift, RingBufferDef* rbd) {
+	if (rbd->lock)
+		RINGS_mutexLock(rbd->mutex);
+	#ifdef RINGS_FREERTOS
+	TickType_t taw = 0;
+	if (rbd->lock)
+		taw = xTaskGetTickCount();
+	#endif
+
     if (shift > 0) { //Если искомы байт находится впереди от ридера
         uint16_t ns = shift;
         uint16_t ptr = rbd->reader;
@@ -328,6 +585,13 @@ uint8_t RINGS_getByShiftFromReader(int32_t shift, RingBufferDef* rbd) {
             ns--;
         }
 
+        if (rbd->lock) {
+        	RINGS_mutexUnLock(rbd->mutex);
+        	#ifdef RINGS_FREERTOS
+        	if (xTaskGetTickCount() != taw)
+        		taskYIELD();
+    		#endif
+        }
         return *(rbd->buffer + ptr);
 
     } else if (shift < 0) { //Если искомый байт находится сзади от райтера
@@ -342,9 +606,23 @@ uint8_t RINGS_getByShiftFromReader(int32_t shift, RingBufferDef* rbd) {
             ns++;
         }
 
+        if (rbd->lock) {
+        	RINGS_mutexUnLock(rbd->mutex);
+        	#ifdef RINGS_FREERTOS
+        	if (xTaskGetTickCount() != taw)
+        		taskYIELD();
+    		#endif
+        }
         return *(rbd->buffer + ptr);
 
     } else { //Если смещение равно нулю
+        if (rbd->lock) {
+        	RINGS_mutexUnLock(rbd->mutex);
+        	#ifdef RINGS_FREERTOS
+        	if (xTaskGetTickCount() != taw)
+        		taskYIELD();
+    		#endif
+        }
         return *(rbd->buffer + rbd->reader);
     }
 }
@@ -356,6 +634,14 @@ uint8_t RINGS_getByShiftFromReader(int32_t shift, RingBufferDef* rbd) {
  * @param rbd определение кольца
  */
 void RINGS_shiftReader(int32_t shift, RingBufferDef* rbd) {
+	if (rbd->lock)
+		RINGS_mutexLock(rbd->mutex);
+	#ifdef RINGS_FREERTOS
+	TickType_t taw = 0;
+	if (rbd->lock)
+		taw = xTaskGetTickCount();
+	#endif
+
     if (shift > 0) { //Если искомы байт находится впереди от райтера
         uint16_t ns = shift;
         uint16_t ptr = rbd->reader;
@@ -381,6 +667,14 @@ void RINGS_shiftReader(int32_t shift, RingBufferDef* rbd) {
         }
         rbd->reader = ptr;
     }
+
+    if (rbd->lock) {
+    	RINGS_mutexUnLock(rbd->mutex);
+    	#ifdef RINGS_FREERTOS
+    	if (xTaskGetTickCount() != taw)
+    		taskYIELD();
+		#endif
+    }
 }
 
 /**
@@ -390,6 +684,14 @@ void RINGS_shiftReader(int32_t shift, RingBufferDef* rbd) {
  * @param rbd определение кольца
  */
 void RINGS_shiftWriter(int32_t shift, RingBufferDef* rbd) {
+	if (rbd->lock)
+		RINGS_mutexLock(rbd->mutex);
+	#ifdef RINGS_FREERTOS
+	TickType_t taw = 0;
+	if (rbd->lock)
+		taw = xTaskGetTickCount();
+	#endif
+
     if (shift > 0) { //Если искомы байт находится впереди от райтера
         uint16_t ns = shift;
         uint16_t ptr = rbd->writer;
@@ -414,6 +716,14 @@ void RINGS_shiftWriter(int32_t shift, RingBufferDef* rbd) {
             ns++;
         }
         rbd->writer = ptr;
+    }
+
+    if (rbd->lock) {
+    	RINGS_mutexUnLock(rbd->mutex);
+    	#ifdef RINGS_FREERTOS
+    	if (xTaskGetTickCount() != taw)
+    		taskYIELD();
+		#endif
     }
 }
 
@@ -428,6 +738,14 @@ void RINGS_shiftWriter(int32_t shift, RingBufferDef* rbd) {
  * @return кол-во фактически записнных в буфер байт
  */
 uint16_t RINGS_extractData(int32_t position, uint16_t size, uint8_t *buffer, RingBufferDef* rbd) {
+	if (rbd->lock)
+		RINGS_mutexLock(rbd->mutex);
+	#ifdef RINGS_FREERTOS
+	TickType_t taw = 0;
+	if (rbd->lock)
+		taw = xTaskGetTickCount();
+	#endif
+
 	uint16_t wptr = 0;
 	uint16_t writed = 0;
 	uint16_t realPosition = 0;
@@ -435,6 +753,9 @@ uint16_t RINGS_extractData(int32_t position, uint16_t size, uint8_t *buffer, Rin
 		realPosition = position;
 	else
 		realPosition = rbd->size - (0 - position);
+
+	if (position > rbd->size - 1)
+		realPosition = position - rbd->size;
 
 	while (writed < size) {
 		buffer[writed] = rbd->buffer[realPosition + wptr];
@@ -447,17 +768,43 @@ uint16_t RINGS_extractData(int32_t position, uint16_t size, uint8_t *buffer, Rin
 		}
 	}
 
+    if (rbd->lock) {
+    	RINGS_mutexUnLock(rbd->mutex);
+    	#ifdef RINGS_FREERTOS
+    	if (xTaskGetTickCount() != taw)
+    		taskYIELD();
+		#endif
+    }
 	return wptr;
 }
 
 uint8_t RINGS_cmpData(uint16_t readerOffset, uint8_t *cmpData, uint16_t dataSize, RingBufferDef* rbd) {
+	if (rbd->lock)
+		RINGS_mutexLock(rbd->mutex);
+	#ifdef RINGS_FREERTOS
+	TickType_t taw = 0;
+	if (rbd->lock)
+		taw = xTaskGetTickCount();
+	#endif
+
 	uint16_t count = 0;
 	uint16_t ptr = rbd->reader + readerOffset;
+	if (ptr > rbd->size)
+		ptr = ptr - rbd->size;
 
 	while(count < dataSize) {
-		char ch = *(rbd->buffer + ptr);
-		if (*(rbd->buffer + ptr) != *(cmpData + count)) {
+		volatile char ch = *(rbd->buffer + ptr);
+		volatile char cmpch = *(cmpData + count);
+		if (ch != cmpch) {
 			ptr = ch;
+		    if (rbd->lock) {
+		    	RINGS_mutexUnLock(rbd->mutex);
+		    	#ifdef RINGS_FREERTOS
+		    	if (xTaskGetTickCount() != taw)
+		    		taskYIELD();
+				#endif
+		    }
+
 			return -1;
 		}
 
@@ -470,10 +817,26 @@ uint8_t RINGS_cmpData(uint16_t readerOffset, uint8_t *cmpData, uint16_t dataSize
 		count++;
 	}
 
+    if (rbd->lock) {
+    	RINGS_mutexUnLock(rbd->mutex);
+    	#ifdef RINGS_FREERTOS
+    	if (xTaskGetTickCount() != taw)
+    		taskYIELD();
+		#endif
+    }
+
 	return 0;
 }
 
 uint8_t RINGS_cmpDataReverse(uint16_t writerOffset, uint8_t *cmpData, uint16_t dataSize, RingBufferDef* rbd) {
+	if (rbd->lock)
+		RINGS_mutexLock(rbd->mutex);
+	#ifdef RINGS_FREERTOS
+	TickType_t taw = 0;
+	if (rbd->lock)
+		taw = xTaskGetTickCount();
+	#endif
+
 	uint16_t count = dataSize;
 	uint16_t ptr = rbd->writer + writerOffset - 1;
 
@@ -481,6 +844,14 @@ uint8_t RINGS_cmpDataReverse(uint16_t writerOffset, uint8_t *cmpData, uint16_t d
 		char ch = *(rbd->buffer + ptr);
 		if (*(rbd->buffer + ptr) != *(cmpData + count - 1)) {
 			ptr = ch;
+		    if (rbd->lock) {
+		    	RINGS_mutexUnLock(rbd->mutex);
+		    	#ifdef RINGS_FREERTOS
+		    	if (xTaskGetTickCount() != taw)
+		    		taskYIELD();
+				#endif
+		    }
+
 			return -1;
 		}
 
@@ -492,6 +863,14 @@ uint8_t RINGS_cmpDataReverse(uint16_t writerOffset, uint8_t *cmpData, uint16_t d
 
 		count--;
 	}
+
+    if (rbd->lock) {
+    	RINGS_mutexUnLock(rbd->mutex);
+    	#ifdef RINGS_FREERTOS
+    	if (xTaskGetTickCount() != taw)
+    		taskYIELD();
+		#endif
+    }
 
 	return 0;
 }

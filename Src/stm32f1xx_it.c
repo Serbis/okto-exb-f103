@@ -4,7 +4,7 @@
   * @brief   Interrupt Service Routines.
   ******************************************************************************
   *
-  * COPYRIGHT(c) 2018 STMicroelectronics
+  * COPYRIGHT(c) 2019 STMicroelectronics
   *
   * Redistribution and use in source and binary forms, with or without modification,
   * are permitted provided that the following conditions are met:
@@ -45,18 +45,33 @@
 #include "../Inc/adc.h"
 
 extern UART_HandleTypeDef huart1;
-extern RingBufferDef *inBuf;
+extern RingBufferDef *uartRing;
 extern uint32_t *ADC1ConvertedValues;
 UART_HandleTypeDef *huartx = &huart1;
 
 //---- Filtration mechanics (for more details see DMA1_Channel1_IRQHandler) ----
 
 extern uint32_t filterSum;
-extern uint8_t filrerChannel = 0;
-extern uint16_t filterIteration = 0;
-extern bool filterCompleted = false;
+extern uint8_t filrerChannel;
+extern uint16_t filterIteration;
+extern bool filterCompleted;
 extern bool filterNw;
 extern ADC_HandleTypeDef hadc1;
+
+//---- Indicator logic
+
+bool led_indic = false;
+bool led_light = true;
+uint8_t led_mode = LED_MODE_RIPPLE;
+
+// ---- Button logic
+
+TickType_t btn_hold = 0;
+
+// ---- Reset mechanics
+
+extern bool soft_reset;
+extern bool man_reset;
 
 /* USER CODE END 0 */
 
@@ -226,7 +241,22 @@ void DMA1_Channel1_IRQHandler(void)
 void TIM1_UP_IRQHandler(void)
 {
   /* USER CODE BEGIN TIM1_UP_IRQn 0 */
-  HAL_ADC_Start_DMA(&hadc1, (uint32_t*) ADC1ConvertedValues, 10);
+	if (led_indic) {
+		if (led_mode == LED_MODE_RIPPLE) {
+			if (led_light == true) {
+				HAL_GPIO_WritePin(GPIOB, GPIO_PIN_9, GPIO_PIN_RESET);
+				led_light = false;
+			} else {
+				HAL_GPIO_WritePin(GPIOB, GPIO_PIN_9, GPIO_PIN_SET);
+				led_light = true;
+			}
+		}
+	} else {
+		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_9, GPIO_PIN_SET);
+		led_light = true;
+		HAL_TIM_Base_Stop_IT(&htim1);
+	}
+
   /* USER CODE END TIM1_UP_IRQn 0 */
   HAL_TIM_IRQHandler(&htim1);
   /* USER CODE BEGIN TIM1_UP_IRQn 1 */
@@ -254,7 +284,7 @@ void USART1_IRQHandler(void)
 		RINGS_dataClear(inBuf);
 		cmdQueue->enqueue(cmdQueue, str);
 	} else {*/
-		RINGS_write(value, inBuf);
+		RINGS_write(value, uartRing);
 	//}
 
 
@@ -265,6 +295,33 @@ void USART1_IRQHandler(void)
   /* USER CODE BEGIN USART1_IRQn 1 */
 
   /* USER CODE END USART1_IRQn 1 */
+}
+
+/**
+* @brief This function handles EXTI line[15:10] interrupts.
+*/
+void EXTI15_10_IRQHandler(void)
+{
+	/* USER CODE BEGIN EXTI15_10_IRQn 0 */
+
+	if (btn_hold == 0) { // Btn pushed
+		btn_hold = xTaskGetTickCountFromISR();
+	} else { //Btn up
+		TickType_t diff = xTaskGetTickCountFromISR() - btn_hold;
+		btn_hold = 0;
+		if (diff > 100 && diff < 8000) { // If click is not a noise error and it hold is less that man reset - soft reset
+			soft_reset = true;
+		} else { // If hold > 8 sec - man reset
+			man_reset = true;
+		}
+	}
+
+	/* USER CODE END EXTI15_10_IRQn 0 */
+
+	HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_15);
+	/* USER CODE BEGIN EXTI15_10_IRQn 1 */
+
+	/* USER CODE END EXTI15_10_IRQn 1 */
 }
 
 /* USER CODE BEGIN 1 */

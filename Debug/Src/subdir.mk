@@ -4,39 +4,66 @@
 
 # Add inputs and outputs from these tool invocations to the build variables 
 C_SRCS += \
+../Src/FreeRTOS-openocd.c \
+../Src/NRF24.c \
 ../Src/adc.c \
-../Src/cmd_processor.c \
 ../Src/config.c \
 ../Src/eeprom.c \
+../Src/exb_gate.c \
+../Src/exb_packet.c \
+../Src/executor.c \
 ../Src/freertos.c \
+../Src/indicator.c \
 ../Src/main.c \
+../Src/proc.c \
+../Src/rf_receiver.c \
+../Src/splitter.c \
 ../Src/stm32f1xx_hal_msp.c \
 ../Src/stm32f1xx_it.c \
 ../Src/system_stm32f1xx.c \
+../Src/transmitter.c \
 ../Src/uart_receiver.c 
 
 OBJS += \
+./Src/FreeRTOS-openocd.o \
+./Src/NRF24.o \
 ./Src/adc.o \
-./Src/cmd_processor.o \
 ./Src/config.o \
 ./Src/eeprom.o \
+./Src/exb_gate.o \
+./Src/exb_packet.o \
+./Src/executor.o \
 ./Src/freertos.o \
+./Src/indicator.o \
 ./Src/main.o \
+./Src/proc.o \
+./Src/rf_receiver.o \
+./Src/splitter.o \
 ./Src/stm32f1xx_hal_msp.o \
 ./Src/stm32f1xx_it.o \
 ./Src/system_stm32f1xx.o \
+./Src/transmitter.o \
 ./Src/uart_receiver.o 
 
 C_DEPS += \
+./Src/FreeRTOS-openocd.d \
+./Src/NRF24.d \
 ./Src/adc.d \
-./Src/cmd_processor.d \
 ./Src/config.d \
 ./Src/eeprom.d \
+./Src/exb_gate.d \
+./Src/exb_packet.d \
+./Src/executor.d \
 ./Src/freertos.d \
+./Src/indicator.d \
 ./Src/main.d \
+./Src/proc.d \
+./Src/rf_receiver.d \
+./Src/splitter.d \
 ./Src/stm32f1xx_hal_msp.d \
 ./Src/stm32f1xx_it.d \
 ./Src/system_stm32f1xx.d \
+./Src/transmitter.d \
 ./Src/uart_receiver.d 
 
 

@@ -99,11 +99,16 @@ long strtol2(const char *nptr, char **endptr, int base, long min, long max, uint
      if (endptr != 0)
          *endptr = (char *) (any ? s - 1 : nptr);
 
-     if (acc < min || acc > max) {
-    	 acc = LONG_MIN;
-    	 *result = 3;
+     if (max != -1) {
+    	 if (acc < min || acc > max) {
+    		 acc = LONG_MIN;
+    	     *result = 3;
+    	 } else {
+    		 *result = 0;
+    	 }
      } else {
     	 *result = 0;
      }
+
      return (acc);
 }

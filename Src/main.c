@@ -10,7 +10,7 @@
   * inserted by the user or by software development tools
   * are owned by their respective copyright owners.
   *
-  * Copyright (c) 2018 STMicroelectronics International N.V. 
+  * Copyright (c) 2019 STMicroelectronics International N.V. 
   * All rights reserved.
   *
   * Redistribution and use in source and binary forms, with or without 
@@ -56,16 +56,23 @@
 #include "stm32f1xx_hal_iwdg.h"
 #include "../Inc/eeprom.h"
 #include <stdbool.h>
-#include "../Inc/cmd_processor.h"
 #include "../Inc/uart_receiver.h"
+#include "../Inc/rf_receiver.h"
+#include "../Inc/exb_gate.h"
+#include "../Inc/proc.h"
+#include "../Inc/transmitter.h"
 #include "libs/oscl/include/threads.h"
 #include "libs/oscl/include/data.h"
 #include "libs/oscl/include/harware.h"
 #include "libs/collections/include/lbq.h"
+#include "libs/collections/include/lbq8.h"
 #include "libs/collections/include/rings.h"
+#include "libs/misc/include/dwt_delay.h"
 #include "../Inc/defines.h"
 #include "../Inc/adc.h"
 #include "../Inc/config.h"
+#include "../Inc/NRF24.h"
+#include "../Inc/proc.h"
 
 /* USER CODE END Includes */
 
@@ -74,6 +81,8 @@ ADC_HandleTypeDef hadc1;
 DMA_HandleTypeDef hdma_adc1;
 
 IWDG_HandleTypeDef hiwdg;
+
+SPI_HandleTypeDef hspi1;
 
 TIM_HandleTypeDef htim1;
 
@@ -84,11 +93,16 @@ osThreadId defaultTaskHandle;
 /* USER CODE BEGIN PV */
 /* Private variables ---------------------------------------------------------*/
 
-bool UartIntEmul_threadAlive = true;
-bool CmdProcessor_threadAlive = true;
-LinkedBlockingQueue *cmdQueue = NULL;
-RingBufferDef *inBuf = NULL;
+RingBufferDef *uartRing = NULL;
 Config *config;
+char str1[20] = {0};
+uint8_t buf1[20] = {0};
+uint8_t dt_reg=0;
+extern mutex_t *rf_mutex;
+
+// This variables used for sort/man reset operations, see freertos default task
+bool soft_reset = false;
+bool man_reset = false;
 
 
 /* USER CODE END PV */
@@ -101,11 +115,11 @@ static void MX_USART1_UART_Init(void);
 static void MX_ADC1_Init(void);
 static void MX_TIM1_Init(void);
 static void MX_IWDG_Init(void);
+static void MX_SPI1_Init(void);
 void StartDefaultTask(void const * argument);
 
 /* USER CODE BEGIN PFP */
 /* Private function prototypes -----------------------------------------------*/
-
 /* USER CODE END PFP */
 
 /* USER CODE BEGIN 0 */
@@ -130,8 +144,11 @@ int main(void)
 
   /* USER CODE BEGIN Init */
 
-  cmdQueue = new_LQB(50);
-  inBuf = RINGS_createRingBuffer(500, RINGS_OVERFLOW_SHIFT, 1);
+  uartRing = RINGS_createRingBuffer(256, RINGS_OVERFLOW_SHIFT, 0);
+  RingBufferDef *rfGateRing =	RINGS_createRingBuffer(256, RINGS_OVERFLOW_SHIFT, 1);
+  RingBufferDef *uartGateRing =	RINGS_createRingBuffer(256, RINGS_OVERFLOW_SHIFT, 1);
+  LinkedBlockingQueue *procQueue = new_LQB(15);
+  LinkedBlockingQueue *transmitterQueue = new_LQB(15);
 
   /* USER CODE END Init */
 
@@ -139,7 +156,7 @@ int main(void)
   SystemClock_Config();
 
   /* USER CODE BEGIN SysInit */
-
+  DWT_Init();
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
@@ -149,14 +166,20 @@ int main(void)
   MX_ADC1_Init();
   MX_TIM1_Init();
   MX_IWDG_Init();
+  MX_SPI1_Init();
   /* USER CODE BEGIN 2 */
 
-  //Runtime configuration
-  //EE_Format();
+  //Start indicator timer
+  HAL_TIM_Base_Start_IT(&htim1);
+
   config = Config_Load(CONFIG_ADDRESS);
-  //config->adc_filtration_count = 100;
-  //config->adc_filtration_delay = 200;
-  //Config_Write(CONFIG_ADDRESS, config);
+  a_self = config->a_self;
+  a_master = config->a_master;
+
+  rf_mutex = NewMutex();
+  NRF_spid = hspi1;
+  NRF24_init();
+  NRF24_init_check();
 
   Harware_initUart();
   ADC_init();
@@ -181,8 +204,39 @@ int main(void)
   defaultTaskHandle = osThreadCreate(osThread(defaultTask), NULL);
 
   /* USER CODE BEGIN RTOS_THREADS */
-  NewThread(CmdProcessor_thread, NULL, 128, strcpy2("c") , 0);
-  NewThread(UartReceiver_thread, NULL, 128, strcpy2("u") , 0);
+
+  osThreadDef(rfReceiverTask, RfReceiver_thread, osPriorityNormal, 0, 128);
+  defaultTaskHandle = osThreadCreate(osThread(rfReceiverTask), rfGateRing);
+
+  UartReceiverThreadArgs *uartReceiverArgs = (UartReceiverThreadArgs*) pmalloc(sizeof(UartReceiverThreadArgs));
+  uartReceiverArgs->uartRing = uartRing;
+  uartReceiverArgs->gateRing = uartGateRing;
+  osThreadDef(uartReceiverTask, UartReceiver_thread, osPriorityNormal, 0, 128);
+  defaultTaskHandle = osThreadCreate(osThread(uartReceiverTask), uartReceiverArgs);
+
+  ExbGateThreadArgs *exbGateArgs1 = (ExbGateThreadArgs*) pmalloc(sizeof(ExbGateThreadArgs));
+  exbGateArgs1->upRing = rfGateRing;
+  exbGateArgs1->downQueue = procQueue;
+  exbGateArgs1->marker = FROM_RF;
+  osThreadDef(exbRfGate, ExbGate_thread, osPriorityNormal, 0, 128);
+  defaultTaskHandle = osThreadCreate(osThread(exbRfGate), exbGateArgs1);
+
+  ExbGateThreadArgs *exbGateArgs2 = (ExbGateThreadArgs*) pmalloc(sizeof(ExbGateThreadArgs));
+  exbGateArgs2->upRing = uartGateRing;
+  exbGateArgs2->downQueue = procQueue;
+  exbGateArgs2->marker = FROM_UART;
+  osThreadDef(exbUartGate, ExbGate_thread, osPriorityNormal, 0, 128);
+  defaultTaskHandle = osThreadCreate(osThread(exbUartGate), exbGateArgs2);
+
+  ProcThreadArgs *procArgs = (ProcThreadArgs*) pmalloc(sizeof(ProcThreadArgs));
+  procArgs->upQueue = procQueue;
+  procArgs->downQueue = transmitterQueue;
+  osThreadDef(proc, Proc_thread, osPriorityNormal, 0, 128);
+  defaultTaskHandle = osThreadCreate(osThread(proc), procArgs);
+
+  osThreadDef(transmitter, Transmitter_thread, osPriorityNormal, 0, 128);
+  defaultTaskHandle = osThreadCreate(osThread(transmitter), transmitterQueue);
+
   /* add threads, ... */
   /* USER CODE END RTOS_THREADS */
 
@@ -200,7 +254,6 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-
   /* USER CODE END WHILE */
 
   /* USER CODE BEGIN 3 */
@@ -223,11 +276,14 @@ void SystemClock_Config(void)
 
     /**Initializes the CPU, AHB and APB busses clocks 
     */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI|RCC_OSCILLATORTYPE_LSI;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_LSI|RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.HSEState = RCC_HSE_ON;
+  RCC_OscInitStruct.HSEPredivValue = RCC_HSE_PREDIV_DIV1;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
-  RCC_OscInitStruct.HSICalibrationValue = 16;
   RCC_OscInitStruct.LSIState = RCC_LSI_ON;
-  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE;
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
+  RCC_OscInitStruct.PLL.PLLMUL = RCC_PLL_MUL9;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
     _Error_Handler(__FILE__, __LINE__);
@@ -237,18 +293,18 @@ void SystemClock_Config(void)
     */
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
-  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_HSI;
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
-  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK)
   {
     _Error_Handler(__FILE__, __LINE__);
   }
 
   PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_ADC;
-  PeriphClkInit.AdcClockSelection = RCC_ADCPCLK2_DIV2;
+  PeriphClkInit.AdcClockSelection = RCC_ADCPCLK2_DIV6;
   if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
   {
     _Error_Handler(__FILE__, __LINE__);
@@ -401,6 +457,30 @@ static void MX_IWDG_Init(void)
 
 }
 
+/* SPI1 init function */
+static void MX_SPI1_Init(void)
+{
+
+  /* SPI1 parameter configuration*/
+  hspi1.Instance = SPI1;
+  hspi1.Init.Mode = SPI_MODE_MASTER;
+  hspi1.Init.Direction = SPI_DIRECTION_2LINES;
+  hspi1.Init.DataSize = SPI_DATASIZE_8BIT;
+  hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
+  hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
+  hspi1.Init.NSS = SPI_NSS_SOFT;
+  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_64;
+  hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
+  hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
+  hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
+  hspi1.Init.CRCPolynomial = 10;
+  if (HAL_SPI_Init(&hspi1) != HAL_OK)
+  {
+    _Error_Handler(__FILE__, __LINE__);
+  }
+
+}
+
 /* TIM1 init function */
 static void MX_TIM1_Init(void)
 {
@@ -409,9 +489,9 @@ static void MX_TIM1_Init(void)
   TIM_MasterConfigTypeDef sMasterConfig;
 
   htim1.Instance = TIM1;
-  htim1.Init.Prescaler = 7999;
+  htim1.Init.Prescaler = 36000;
   htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim1.Init.Period = 5000;
+  htim1.Init.Period = 100;
   htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim1.Init.RepetitionCounter = 0;
   htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
@@ -482,31 +562,77 @@ static void MX_GPIO_Init(void)
   GPIO_InitTypeDef GPIO_InitStruct;
 
   /* GPIO Ports Clock Enable */
+  __HAL_RCC_GPIOC_CLK_ENABLE();
+  __HAL_RCC_GPIOD_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2|GPIO_PIN_10|GPIO_PIN_11|GPIO_PIN_12 
-                          |GPIO_PIN_13|GPIO_PIN_14|GPIO_PIN_15, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOC, G0_o_Pin|G1_o_Pin|G2_o_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_8, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOB, G13_o_Pin|G14_o_Pin|G15_o_Pin|G16_o_Pin 
+                          |G17_o_Pin|G18_o_Pin|G19_o_Pin|NRF_CE_Pin 
+                          |LED_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pins : PB2 PB10 PB11 PB12 
-                           PB13 PB14 PB15 */
-  GPIO_InitStruct.Pin = GPIO_PIN_2|GPIO_PIN_10|GPIO_PIN_11|GPIO_PIN_12 
-                          |GPIO_PIN_13|GPIO_PIN_14|GPIO_PIN_15;
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOA, G20_o_Pin|G21_o_Pin|G22_o_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(NRF_CS_GPIO_Port, NRF_CS_Pin, GPIO_PIN_SET);
+
+  /*Configure GPIO pins : G0_o_Pin G1_o_Pin G2_o_Pin */
+  GPIO_InitStruct.Pin = G0_o_Pin|G1_o_Pin|G2_o_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : G13_o_Pin G14_o_Pin G15_o_Pin G16_o_Pin 
+                           G17_o_Pin G18_o_Pin G19_o_Pin */
+  GPIO_InitStruct.Pin = G13_o_Pin|G14_o_Pin|G15_o_Pin|G16_o_Pin 
+                          |G17_o_Pin|G18_o_Pin|G19_o_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_PULLDOWN;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : PA8 */
-  GPIO_InitStruct.Pin = GPIO_PIN_8;
+  /*Configure GPIO pin : G20_o_Pin */
+  GPIO_InitStruct.Pin = G20_o_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_PULLDOWN;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(G20_o_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : G21_o_Pin G22_o_Pin */
+  GPIO_InitStruct.Pin = G21_o_Pin|G22_o_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : BUTTON_Pin */
+  GPIO_InitStruct.Pin = BUTTON_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING_FALLING;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(BUTTON_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : NRF_CS_Pin NRF_CE_Pin LED_Pin */
+  GPIO_InitStruct.Pin = NRF_CS_Pin|NRF_CE_Pin|LED_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : NRF_IRQ_Pin */
+  GPIO_InitStruct.Pin = NRF_IRQ_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(NRF_IRQ_GPIO_Port, &GPIO_InitStruct);
+
+  /* EXTI interrupt init*/
+  HAL_NVIC_SetPriority(EXTI15_10_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
 
 }
 
@@ -530,12 +656,18 @@ void StartDefaultTask(void const * argument)
   for(;;)
   {
 
-	  //size_t size = xPortGetFreeHeapSize();
-	  //char *str = itoa2(size);
-	  //pfree(str);
-	  //Hardware_readAdc(1);
-	  HAL_IWDG_Refresh(&hiwdg);
-	  osDelay(200);
+
+	  // reset_mode set by button interrupt handler
+	  if (soft_reset) { //soft reset mode
+		; //do not refresh iwdg, mcu will be reset at iwdg overflow ( <= 1000 ms )
+	  } else if (man_reset) { //man reset mode
+		  Config_Reset(CONFIG_ADDRESS); //clear config magic, it will fully reset firmware configuration
+		  //do not refresh iwdg, mcu will be reset at iwdg overflow ( <= 1000 ms )
+	  } else {
+		  HAL_IWDG_Refresh(&hiwdg);
+	  }
+
+	  vTaskDelay(200);
   }
   /* USER CODE END 5 */ 
 }

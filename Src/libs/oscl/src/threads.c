@@ -2,6 +2,7 @@
 #include "../include/threads.h"
 #include "../include/malloc.h"
 #include "cmsis_os.h"
+//#include "../Middlewares/Third_Party/FreeRTOS/Source/include/queue.h"
 
 
 thread_t NewThread(void (*run)(void *), void *args, uint16_t stackSize, char *name, uint64_t priority) {
@@ -14,18 +15,19 @@ thread_t NewThread(void (*run)(void *), void *args, uint16_t stackSize, char *na
     	return NULL;
 }
 
-mutex_t* NewMutex() {
+mutex_t NewMutex() {
 	//SemaphoreHandle_t *mutex = pmalloc(sizeof(SemaphoreHandle_t));
 	//*mutex = xSemaphoreCreateMutex();
 	//return mutex;
-	return xSemaphoreCreateMutex();
+	mutex_t m = xSemaphoreCreateMutex();
+	return m;
 }
 
-void MutexLock(mutex_t *mutex) {
+void MutexLock(mutex_t mutex) {
 	xSemaphoreTake(mutex, portMAX_DELAY);
 }
 
-int MutexTryLock(mutex_t *mutex) {
+int MutexTryLock(mutex_t mutex) {
 	BaseType_t result = xSemaphoreTake(mutex, 1);
 	if (result == pdTRUE)
 		return 0;
@@ -33,6 +35,6 @@ int MutexTryLock(mutex_t *mutex) {
 		return 1;
 }
 
-void MutexUnlock(mutex_t *mutex) {
+void MutexUnlock(mutex_t mutex) {
 	xSemaphoreGive(mutex);
 }

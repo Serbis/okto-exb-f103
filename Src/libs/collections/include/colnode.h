@@ -6,9 +6,14 @@
 #define ACTORS_COLNODE_H
 
 typedef struct Node {
-    void* item;
+    void *item;
     struct Node *next;
 } Node;
+
+typedef struct Node8 {
+    uint8_t item;
+    struct Node *next;
+} Node8;
 
 
 #endif //ACTORS_COLNODE_H
