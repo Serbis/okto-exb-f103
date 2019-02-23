@@ -31,6 +31,7 @@
   ******************************************************************************
   */
 /* Includes ------------------------------------------------------------------*/
+#include <event_producer.h>
 #include "stm32f1xx_hal.h"
 #include "stm32f1xx.h"
 #include "stm32f1xx_it.h"
@@ -39,6 +40,7 @@
 /* USER CODE BEGIN 0 */
 
 #include <stdbool.h>
+#include "../Inc/executor.h"
 #include "libs/collections/include/lbq.h"
 #include "libs/oscl/include/threads.h"
 #include "libs/collections/include/rings.h"
@@ -72,6 +74,10 @@ TickType_t btn_hold = 0;
 
 extern bool soft_reset;
 extern bool man_reset;
+
+// --- Interrupt cuts
+
+InterruptCut interruptCuts[23];
 
 /* USER CODE END 0 */
 
@@ -297,34 +303,89 @@ void USART1_IRQHandler(void)
   /* USER CODE END USART1_IRQn 1 */
 }
 
-/**
-* @brief This function handles EXTI line[15:10] interrupts.
-*/
-void EXTI15_10_IRQHandler(void)
-{
-	/* USER CODE BEGIN EXTI15_10_IRQn 0 */
+uint16_t EXTI_detectPhisicalPin() {
+	if (__HAL_GPIO_EXTI_GET_IT(GPIO_PIN_0)) return 0;
+	else if (__HAL_GPIO_EXTI_GET_IT(GPIO_PIN_1)) return GPIO_PIN_1;
+	else if (__HAL_GPIO_EXTI_GET_IT(GPIO_PIN_2)) return GPIO_PIN_2;
+	else if (__HAL_GPIO_EXTI_GET_IT(GPIO_PIN_3)) return GPIO_PIN_3;
+	else if (__HAL_GPIO_EXTI_GET_IT(GPIO_PIN_4)) return GPIO_PIN_4;
+	else if (__HAL_GPIO_EXTI_GET_IT(GPIO_PIN_5)) return GPIO_PIN_5;
+	else if (__HAL_GPIO_EXTI_GET_IT(GPIO_PIN_6)) return GPIO_PIN_6;
+	else if (__HAL_GPIO_EXTI_GET_IT(GPIO_PIN_7)) return GPIO_PIN_7;
+	else if (__HAL_GPIO_EXTI_GET_IT(GPIO_PIN_8)) return GPIO_PIN_8;
+	else if (__HAL_GPIO_EXTI_GET_IT(GPIO_PIN_9)) return GPIO_PIN_9;
+	else if (__HAL_GPIO_EXTI_GET_IT(GPIO_PIN_10)) return GPIO_PIN_10;
+	else if (__HAL_GPIO_EXTI_GET_IT(GPIO_PIN_11)) return GPIO_PIN_11;
+	else if (__HAL_GPIO_EXTI_GET_IT(GPIO_PIN_12)) return GPIO_PIN_12;
+	else if (__HAL_GPIO_EXTI_GET_IT(GPIO_PIN_13)) return GPIO_PIN_13;
+	else if (__HAL_GPIO_EXTI_GET_IT(GPIO_PIN_14)) return GPIO_PIN_14;
+	else if (__HAL_GPIO_EXTI_GET_IT(GPIO_PIN_15)) return GPIO_PIN_15;
 
-	if (btn_hold == 0) { // Btn pushed
-		btn_hold = xTaskGetTickCountFromISR();
-	} else { //Btn up
-		TickType_t diff = xTaskGetTickCountFromISR() - btn_hold;
-		btn_hold = 0;
-		if (diff > 100 && diff < 8000) { // If click is not a noise error and it hold is less that man reset - soft reset
-			soft_reset = true;
-		} else { // If hold > 8 sec - man reset
-			man_reset = true;
-		}
-	}
-
-	/* USER CODE END EXTI15_10_IRQn 0 */
-
-	HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_15);
-	/* USER CODE BEGIN EXTI15_10_IRQn 1 */
-
-	/* USER CODE END EXTI15_10_IRQn 1 */
+	return 0;
 }
 
-/* USER CODE BEGIN 1 */
+void EXTI_handleEventsLogic(uint16_t pin) {
+	uint8_t exbPin = Executor_pinToGpio(pin);
+
+	time_t curt = xTaskGetTickCountFromISR();
+	if (curt > interruptCuts[exbPin].last + interruptCuts[exbPin].threshold) {
+		if (eventStream != NULL) {
+			EventDef event = { 0, exbPin };
+			xQueueSendFromISR(eventStream, &event, 0);
+		}
+
+		interruptCuts[exbPin].last = curt;
+	}
+
+}
+
+void EXTI15_10_IRQHandler(void)
+{
+	uint16_t pin = EXTI_detectPhisicalPin();
+
+	if (pin == GPIO_PIN_15) { // Button
+		if (btn_hold == 0) { // Btn pushed
+			btn_hold = xTaskGetTickCountFromISR();
+		} else { //Btn up
+			TickType_t diff = xTaskGetTickCountFromISR() - btn_hold;
+			btn_hold = 0;
+			if (diff > 100 && diff < 8000) { // If click is not a noise error and it hold is less that man reset - soft reset
+				soft_reset = true;
+			} else { // If hold > 8 sec - man reset
+				man_reset = true;
+			}
+		}
+	} else { // External interrupts
+		EXTI_handleEventsLogic(pin);
+	}
+
+	HAL_GPIO_EXTI_IRQHandler(pin);
+}
+
+void EXTI9_5_IRQHandler(void) {
+
+}
+
+void EXTI4_IRQHandler(void)
+{
+	HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_4);
+}
+void EXTI3_IRQHandler(void)
+{
+	HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_3);
+}
+void EXTI2_IRQHandler(void)
+{
+	HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_2);
+}
+void EXTI1_IRQHandler(void)
+{
+	HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_1);
+}
+void EXTI0_IRQHandler(void)
+{
+	HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_0);
+}
 
 /* USER CODE END 1 */
 /************************ (C) COPYRIGHT STMicroelectronics *****END OF FILE****/

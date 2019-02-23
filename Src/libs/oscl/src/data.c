@@ -1,15 +1,25 @@
 #include "../include/data.h"
+#include "stdlib.h"
 #include <limits.h>
 
 char* itoa2(int num) {
-    char *buf = pmalloc(50);
+	char *buf = pmalloc(50);
+	itoa(num, buf, 10);
+	uint8_t len = (uint8_t) (strlen(buf) + 1);
+	char *split = pmalloc(len);
+	memcpy(split, buf, len);
+	pfree(buf);
+
+	return split;
+
+    /*char *buf = pmalloc(50);
     sprintf(buf, "%d", num);
     uint8_t len = (uint8_t) (strlen(buf) + 1);
     char *split = pmalloc(len);
     memcpy(split, buf, len);
     pfree(buf);
 
-    return split;
+    return split;*/
 }
 
 char* strcpy2(char* str) {

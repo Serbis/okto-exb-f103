@@ -17,8 +17,19 @@ Config* Config_Load(uint16_t address) {
 		cfg->magic = CONFIG_MAGIC;
 		cfg->adc_filtration_count = 2048;
 		cfg->adc_filtration_delay = 0;
-		cfg->a_self = 0xAAAAAA01;
-		cfg->a_master = 0xAAAAAAA1;
+		cfg->a_self = 0x11111101;
+		cfg->a_master = 0x111111A1;
+		for (uint8_t i = 0; i < 23; i++) { //def = _o0
+			cfg->gpiom[i] = 0;
+		}
+
+		for (uint8_t i = 0; i < MAX_EVENTS; i++) {
+			cfg->events[i] = 0;
+		}
+
+		for (uint8_t i = 0; i < MAX_EVENT_ARGS; i++) {
+			cfg->eventArgs[i] = 0;
+		}
 	}
 
 	return cfg;

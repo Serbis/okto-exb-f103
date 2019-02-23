@@ -47,6 +47,8 @@
   ******************************************************************************
   */
 /* Includes ------------------------------------------------------------------*/
+#include <event_manager.h>
+#include <event_producer.h>
 #include "main.h"
 #include "stm32f1xx_hal.h"
 #include "cmsis_os.h"
@@ -54,6 +56,7 @@
 /* USER CODE BEGIN Includes */
 
 #include "stm32f1xx_hal_iwdg.h"
+#include "stm32f1xx_it.h"
 #include "../Inc/eeprom.h"
 #include <stdbool.h>
 #include "../Inc/uart_receiver.h"
@@ -70,8 +73,10 @@
 #include "libs/misc/include/dwt_delay.h"
 #include "../Inc/defines.h"
 #include "../Inc/adc.h"
+#include "../Inc/executor.h"
 #include "../Inc/config.h"
 #include "../Inc/NRF24.h"
+#include "../Inc/event_cotroller.h"
 #include "../Inc/proc.h"
 
 /* USER CODE END Includes */
@@ -99,6 +104,7 @@ char str1[20] = {0};
 uint8_t buf1[20] = {0};
 uint8_t dt_reg=0;
 extern mutex_t *rf_mutex;
+extern InterruptCut interruptCuts[23];
 
 // This variables used for sort/man reset operations, see freertos default task
 bool soft_reset = false;
@@ -149,6 +155,11 @@ int main(void)
   RingBufferDef *uartGateRing =	RINGS_createRingBuffer(256, RINGS_OVERFLOW_SHIFT, 1);
   LinkedBlockingQueue *procQueue = new_LQB(15);
   LinkedBlockingQueue *transmitterQueue = new_LQB(15);
+  QueueHandle_t pendingEventStream = xQueueCreate(5, 4);
+  QueueHandle_t ackEventStream = xQueueCreate(5, 4);
+
+  //Config_Reset(CONFIG_ADDRESS);
+  config = Config_Load(CONFIG_ADDRESS);
 
   /* USER CODE END Init */
 
@@ -165,14 +176,12 @@ int main(void)
   MX_USART1_UART_Init();
   MX_ADC1_Init();
   MX_TIM1_Init();
-  MX_IWDG_Init();
   MX_SPI1_Init();
   /* USER CODE BEGIN 2 */
 
   //Start indicator timer
   HAL_TIM_Base_Start_IT(&htim1);
 
-  config = Config_Load(CONFIG_ADDRESS);
   a_self = config->a_self;
   a_master = config->a_master;
 
@@ -218,6 +227,7 @@ int main(void)
   exbGateArgs1->upRing = rfGateRing;
   exbGateArgs1->downQueue = procQueue;
   exbGateArgs1->marker = FROM_RF;
+  exbGateArgs1->ackEventStream = ackEventStream;
   osThreadDef(exbRfGate, ExbGate_thread, osPriorityNormal, 0, 128);
   defaultTaskHandle = osThreadCreate(osThread(exbRfGate), exbGateArgs1);
 
@@ -225,17 +235,30 @@ int main(void)
   exbGateArgs2->upRing = uartGateRing;
   exbGateArgs2->downQueue = procQueue;
   exbGateArgs2->marker = FROM_UART;
+  exbGateArgs2->ackEventStream = ackEventStream;
   osThreadDef(exbUartGate, ExbGate_thread, osPriorityNormal, 0, 128);
   defaultTaskHandle = osThreadCreate(osThread(exbUartGate), exbGateArgs2);
 
   ProcThreadArgs *procArgs = (ProcThreadArgs*) pmalloc(sizeof(ProcThreadArgs));
   procArgs->upQueue = procQueue;
   procArgs->downQueue = transmitterQueue;
-  osThreadDef(proc, Proc_thread, osPriorityNormal, 0, 128);
+  osThreadDef(proc, Proc_thread, osPriorityNormal, 0, 200);
   defaultTaskHandle = osThreadCreate(osThread(proc), procArgs);
 
   osThreadDef(transmitter, Transmitter_thread, osPriorityNormal, 0, 128);
   defaultTaskHandle = osThreadCreate(osThread(transmitter), transmitterQueue);
+
+  EventsProducerThreadArgs *evpThreadArgs = (EventsProducerThreadArgs*) pmalloc(sizeof(EventsProducerThreadArgs));
+  evpThreadArgs->pendingEventStream = pendingEventStream;
+  osThreadDef(eventProducer, EventsProducer_thread, osPriorityNormal, 0, 128);
+  defaultTaskHandle = osThreadCreate(osThread(eventProducer), evpThreadArgs);
+
+  EventsControllerThreadArgs *evcThreadArgs = (EventsControllerThreadArgs*) pmalloc(sizeof(EventsControllerThreadArgs));
+  evcThreadArgs->pendingEventStream = pendingEventStream;
+  evcThreadArgs->ackEventStream = ackEventStream;
+  evcThreadArgs->transmitterQueue = transmitterQueue;
+  osThreadDef(eventController, EventController_thread, osPriorityNormal, 0, 64);
+  defaultTaskHandle = osThreadCreate(osThread(eventController), evcThreadArgs);
 
   /* add threads, ... */
   /* USER CODE END RTOS_THREADS */
@@ -346,7 +369,7 @@ static void MX_ADC1_Init(void)
     */
   sConfig.Channel = ADC_CHANNEL_0;
   sConfig.Rank = ADC_REGULAR_RANK_1;
-  sConfig.SamplingTime = ADC_SAMPLETIME_1CYCLE_5;
+  sConfig.SamplingTime =  ADC_SAMPLETIME_239CYCLES_5;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
     _Error_Handler(__FILE__, __LINE__);
@@ -567,6 +590,7 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
+
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOC, G0_o_Pin|G1_o_Pin|G2_o_Pin, GPIO_PIN_RESET);
 
@@ -629,11 +653,6 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(NRF_IRQ_GPIO_Port, &GPIO_InitStruct);
-
-  /* EXTI interrupt init*/
-  HAL_NVIC_SetPriority(EXTI15_10_IRQn, 5, 0);
-  HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
-
 }
 
 /* USER CODE BEGIN 4 */
@@ -647,28 +666,142 @@ static void MX_GPIO_Init(void)
   * @retval None
   */
 /* USER CODE END Header_StartDefaultTask */
-void StartDefaultTask(void const * argument)
-{
-
-  /* USER CODE BEGIN 5 */
-
-  /* Infinite loop */
-  for(;;)
-  {
+void StartDefaultTask(void const * argument) {
 
 
-	  // reset_mode set by button interrupt handler
-	  if (soft_reset) { //soft reset mode
-		; //do not refresh iwdg, mcu will be reset at iwdg overflow ( <= 1000 ms )
-	  } else if (man_reset) { //man reset mode
-		  Config_Reset(CONFIG_ADDRESS); //clear config magic, it will fully reset firmware configuration
-		  //do not refresh iwdg, mcu will be reset at iwdg overflow ( <= 1000 ms )
-	  } else {
-		  HAL_IWDG_Refresh(&hiwdg);
+	GPIO_InitTypeDef GPIO_InitStruct;
+
+	// ----------------- exb gpio configuration -----------------------
+
+	for (uint8_t i = 0; i <= 22; i++) { //Configure exb gpio system
+	  if (i < 2 || i > 12) { // For all not adc and not pin 2 (button irq pair)
+		  char *pin_s = itoa2(i);
+		  GpioMap *gp = Executor_map_gpio(pin_s);
+		  uint16_t set = 0;
+		  memcpy(&set, &(config->gpiom[i]), 2);
+		  uint16_t mode = (set & 0b1111000000000000) >> 12;
+		  if (mode == 0) { // OUT
+			  uint16_t state = (set & 0b0000100000000000) >> 11;
+
+			  GPIO_InitStruct.Pin = gp->pin;
+			  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+			  GPIO_InitStruct.Pull = GPIO_NOPULL;
+			  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+			  HAL_GPIO_Init(gp->port, &GPIO_InitStruct);
+
+			  if (state == 0)
+				  HAL_GPIO_WritePin(gp->port, gp->pin, GPIO_PIN_RESET);
+			  else
+				  HAL_GPIO_WritePin(gp->port, gp->pin, GPIO_PIN_SET);
+
+		  } else if (mode == 1) { // IN
+			  uint16_t pull = (set & 0b0000110000000000) >> 10;
+
+			  GPIO_InitStruct.Pin = gp->pin;
+			  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+
+			  if (pull == 0)
+				  GPIO_InitStruct.Pull = GPIO_PULLUP;
+			  else if (pull == 1)
+				  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
+			  else
+				  GPIO_InitStruct.Pull = GPIO_NOPULL;
+
+			  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+			  HAL_GPIO_Init(gp->port, &GPIO_InitStruct);
+
+
+		  } else if (mode == 2) { // IRQ
+			  uint16_t mode = (set & 0b0000110000000000) >> 10;
+			  uint16_t pull = (set & 0b0000001100000000) >> 8;
+			  uint16_t cutoff = (set & 0b0000000011100000) >> 5;
+
+			  GPIO_InitStruct.Pin = gp->pin;
+
+			  if (mode == 0) {
+				  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+			  } else if (mode == 1) {
+				  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
+			  } else {
+				  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING_FALLING;
+			  }
+
+			  if (pull == 0)
+				  GPIO_InitStruct.Pull = GPIO_PULLUP;
+			  else if (pull == 1)
+			  	  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
+			  else
+				  GPIO_InitStruct.Pull = GPIO_NOPULL;
+
+			  HAL_GPIO_Init(gp->port, &GPIO_InitStruct);
+
+			  uint16_t c = 0;
+			  if (cutoff == 1)
+				  c = 1;
+			  else if (cutoff == 2)
+				  c = 10;
+			  else if (cutoff == 3)
+				  c = 50;
+			  else if (cutoff == 4)
+				  c = 100;
+			  else if (cutoff == 5)
+				  c = 250;
+			  else if (cutoff == 6)
+				  c = 500;
+			  else if (cutoff == 7)
+				  c = 1000;
+
+
+			  InterruptCut cut = {0, c};
+			  uint16_t complPin = Executor_pinToGpio(gp->pin);
+			  interruptCuts[complPin] = cut;
+			  interruptCuts[i] = cut;
+		  }
+
+		  pfree(pin_s);
+		  pfree(gp);
 	  }
+	}
 
-	  vTaskDelay(200);
-  }
+	  /* EXTI interrupt init*/
+	  HAL_NVIC_SetPriority(EXTI15_10_IRQn, 5, 0);
+	  HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
+
+	  HAL_NVIC_SetPriority(EXTI9_5_IRQn, 6, 0);
+	  HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
+
+	  HAL_NVIC_SetPriority(EXTI4_IRQn, 7, 0);
+	  HAL_NVIC_EnableIRQ(EXTI4_IRQn);
+
+	  HAL_NVIC_SetPriority(EXTI3_IRQn, 8, 0);
+	  HAL_NVIC_EnableIRQ(EXTI3_IRQn);
+
+	  HAL_NVIC_SetPriority(EXTI2_IRQn, 9, 0);
+	  HAL_NVIC_EnableIRQ(EXTI2_IRQn);
+
+	  HAL_NVIC_SetPriority(EXTI1_IRQn, 10, 0);
+	  HAL_NVIC_EnableIRQ(EXTI1_IRQn);
+
+	  HAL_NVIC_SetPriority(EXTI0_IRQn, 11, 0);
+	  HAL_NVIC_EnableIRQ(EXTI0_IRQn);
+
+	// -------------------------------------------------------------
+
+	 MX_IWDG_Init();
+
+	 for(;;) {
+		  // reset_mode set by button interrupt handler
+		  if (soft_reset) { //soft reset mode
+			; //do not refresh iwdg, mcu will be reset at iwdg overflow ( <= 1000 ms )
+		  } else if (man_reset) { //man reset mode
+			  Config_Reset(CONFIG_ADDRESS); //clear config magic, it will fully reset firmware configuration
+			  //do not refresh iwdg, mcu will be reset at iwdg overflow ( <= 1000 ms )
+		  } else {
+			  HAL_IWDG_Refresh(&hiwdg);
+		  }
+
+		  vTaskDelay(200);
+	 }
   /* USER CODE END 5 */ 
 }
 

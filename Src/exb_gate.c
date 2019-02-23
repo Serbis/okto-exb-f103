@@ -8,6 +8,7 @@
 #include "../libs/collections/include/lbq8.h"
 #include "../libs/collections/include/rings.h"
 #include "../Inc/exb_packet.h"
+#include "event_producer.h"
 
 #define MODE_PREAMBLE 0
 #define MODE_HEADER 1
@@ -60,18 +61,25 @@ void ExbGate_thread(ExbGateThreadArgs *args) {
 			 } else { // If collected packet body
 			 	if (dlen >= sbody) {  // Buffer contain data with size of body or more
 			    	uint8_t *body = (uint8_t*) pmalloc(sbody);
-			        ProcQueueElem *elem = (ProcQueueElem*) pmalloc(sizeof(ProcQueueElem));
+
 			        RINGS_readAll(body, inBuf);
 
 			        Indicator_cmdIn();
 
-			        // Ok, packet if fully completed, create proc action and enqueu it
-			        elem->id = packet->tid;
-			        elem->action = packet->type;
-			        elem->size = packet->length;
-			        elem->from = args->marker;
-			        elem->data = body;
-			        downQueue->enqueue(downQueue, elem);
+			        // Ok, packet if fully completed, detect action and emit it
+			        if (packet->type == EXB_TYPE_EVENT_ACK) {
+			        	xQueueSend(args->ackEventStream, &(packet->tid), portMAX_DELAY);
+			        	pfree(body);
+			        } else {
+			        	ProcQueueElem *elem = (ProcQueueElem*) pmalloc(sizeof(ProcQueueElem));
+			        	elem->id = packet->tid;
+			        	elem->action = packet->type;
+			        	elem->size = packet->length;
+			        	elem->from = args->marker;
+			        	elem->data = body;
+			        	downQueue->enqueue(downQueue, elem);
+			        }
+
 			        pfree(packet);
 
 			        // Expect next packet from the data stream

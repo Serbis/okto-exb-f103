@@ -8,6 +8,7 @@
 typedef struct ExbGateThreadArgs {
 	RingBufferDef *upRing;
 	LinkedBlockingQueue *downQueue;
+	QueueHandle_t ackEventStream;
 	uint8_t marker;
 } ExbGateThreadArgs;
 

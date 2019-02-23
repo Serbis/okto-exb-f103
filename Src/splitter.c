@@ -27,7 +27,7 @@ StringSplitter* Splitter_splitString(char *str, char *splitter, uint32_t maxels,
 	uint32_t sspl = strlen(splitter);
 	char *sraw = (char*) malloc(sspl);
 	char *left = (char*) malloc(maxels);
-	char **elems = (char**) malloc(maxelc);
+	char **elems = (char**) malloc(maxelc * 4);
 	memcpy(sraw, splitter, sspl);
 
 	uint32_t elc = 0;

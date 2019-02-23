@@ -16,12 +16,6 @@
 /** Strange error */
 #define PROCERR_STRE 103
 
-/** Action received from rf */
-#define FROM_RF 0
-
-/** Action received from uart */
-#define FROM_UART 1
-
 typedef struct ProcThreadArgs {
 	LinkedBlockingQueue *upQueue;
 	LinkedBlockingQueue *downQueue;

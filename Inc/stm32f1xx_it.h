@@ -48,6 +48,12 @@
 #define LED_MODE_RIPPLE 0
 /* Exported functions ------------------------------------------------------- */
 
+
+ typedef struct {
+ 	uint32_t last;
+ 	uint16_t threshold;
+ } InterruptCut;
+
 void NMI_Handler(void);
 void HardFault_Handler(void);
 void MemManage_Handler(void);
@@ -59,6 +65,12 @@ void DMA1_Channel1_IRQHandler(void);
 void TIM1_UP_IRQHandler(void);
 void USART1_IRQHandler(void);
 void EXTI15_10_IRQHandler(void);
+void EXTI9_5_IRQHandler(void);
+void EXTI4_IRQHandler(void);
+void EXTI3_IRQHandler(void);
+void EXTI2_IRQHandler(void);
+void EXTI1_IRQHandler(void);
+void EXTI0_IRQHandler(void);
 
 #ifdef __cplusplus
 }
