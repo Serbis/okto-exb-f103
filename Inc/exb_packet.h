@@ -14,6 +14,7 @@
 #define EXB_TYPE_EVENT 3
 #define EXB_TYPE_EVENTC 4
 #define EXB_TYPE_EVENT_ACK 5
+#define EXB_TYPE_TICK 6
 
 typedef struct ExbPacket {
 	uint64_t preamble;

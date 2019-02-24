@@ -27,7 +27,8 @@ uint8_t* ExbPacket_toBinary(ExbPacket *packet, uint16_t *size) {
 	    *(bin + 13) = (packet->length & 0xff00) >> 8; //LENGTH
 	    *(bin + 14) = packet->length & 0x00ff;
 
-	    memcpy(bin + 15, packet->body, packet->length);
+	    if (packet->length > 0)
+	    	memcpy(bin + 15, packet->body, packet->length);
 
 	    *size = 15 + packet->length;
 

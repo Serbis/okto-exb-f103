@@ -24,11 +24,21 @@ BaseEventCtl **regEvents;
 
 uint8_t regEventsSize;
 
+PendingEvent* EventsProducer_createPendingEvent(uint32_t code, uint32_t size, uint8_t *data) {
+	PendingEvent *pEvent = (PendingEvent*) malloc(sizeof(PendingEvent));
+	pEvent->code = code;
+	pEvent->confirmed = EventManager_isConfirnmed(code);
+	pEvent->size = size;
+	pEvent->data = data;
+
+	return pEvent;
+}
+
 void EventsProducer_thread(EventsProducerThreadArgs *args) {
 	eventStream = xQueueCreate(25, sizeof(EventDef));
 
 
-	// init persisted events
+	// Init persisted events
 	uint8_t size = 0;
 	uint32_t *list = EventManager_list(&size);
 
@@ -54,10 +64,18 @@ void EventsProducer_thread(EventsProducerThreadArgs *args) {
 	free(list);
 	regEventsSize = size;
 
+	// Emit exb start event
+	PendingEvent *pEvent = (PendingEvent*) malloc(sizeof(PendingEvent));
+	pEvent->code = 100;
+	pEvent->confirmed = true;
+	pEvent->size = 0;
+	pEvent->data = NULL;
+	xQueueSend(args->pendingEventStream, &pEvent, portMAX_DELAY);
+
 	while(1) {
 		EventDef event;
 		if(xQueueReceive(eventStream, &event, 1000) == pdPASS) {
-			PendingEvent *pEvent = NULL;
+			pEvent = NULL;
 
 			if (event.type == 0) { //EXTI
 				for (uint8_t i = 0; i < regEventsSize; i++) {
@@ -67,11 +85,7 @@ void EventsProducer_thread(EventsProducerThreadArgs *args) {
 						uint32_t pin = 0;
 						EventManager_getArg(code, 0, &pin);
 						if (pin == event.data) {
-							pEvent = (PendingEvent*) malloc(sizeof(PendingEvent));
-							pEvent->code = code;
-							pEvent->confirmed = EventManager_isConfirnmed(code);
-							pEvent->size = 0;
-							pEvent->data = NULL;
+							pEvent = EventsProducer_createPendingEvent(code, 0, NULL);
 						}
 					} else if (type == 1) {
 						uint32_t pin = 0;
@@ -84,12 +98,7 @@ void EventsProducer_thread(EventsProducerThreadArgs *args) {
 						if (pin == event.data) {
 							if (countern - counterl >= thr - 1) {
 								char *counterStr = itoa2(countern + 1);
-								pEvent = (PendingEvent*) malloc(sizeof(PendingEvent));
-								pEvent->code = code;
-								pEvent->confirmed = EventManager_isConfirnmed(code);
-								pEvent->size = strlen(counterStr);
-								pEvent->data = (uint8_t*) counterStr;
-
+								pEvent = EventsProducer_createPendingEvent(code, strlen(counterStr), (uint8_t*) counterStr);
 
 								((Type1EventCtl*) regEvents[i])->counterl = countern + 1;
 								((Type1EventCtl*) regEvents[i])->countern = countern + 1;

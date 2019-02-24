@@ -60,17 +60,18 @@ void ExbGate_thread(ExbGateThreadArgs *args) {
 			     }
 			 } else { // If collected packet body
 			 	if (dlen >= sbody) {  // Buffer contain data with size of body or more
-			    	uint8_t *body = (uint8_t*) pmalloc(sbody);
-
-			        RINGS_readAll(body, inBuf);
 
 			        Indicator_cmdIn();
 
 			        // Ok, packet if fully completed, detect action and emit it
 			        if (packet->type == EXB_TYPE_EVENT_ACK) {
 			        	xQueueSend(args->ackEventStream, &(packet->tid), portMAX_DELAY);
-			        	pfree(body);
-			        } else {
+			        	Indicator_cmdOut();
+			        } else if (packet->type == EXB_TYPE_CMD) {
+			        	uint8_t *body = (uint8_t*) pmalloc(sbody);
+
+			        	RINGS_readAll(body, inBuf);
+
 			        	ProcQueueElem *elem = (ProcQueueElem*) pmalloc(sizeof(ProcQueueElem));
 			        	elem->id = packet->tid;
 			        	elem->action = packet->type;
@@ -78,6 +79,8 @@ void ExbGate_thread(ExbGateThreadArgs *args) {
 			        	elem->from = args->marker;
 			        	elem->data = body;
 			        	downQueue->enqueue(downQueue, elem);
+			        } else {
+			        	Indicator_cmdOut();
 			        }
 
 			        pfree(packet);

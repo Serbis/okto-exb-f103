@@ -17,15 +17,27 @@ void RfReceiver_thread(void const * args) {
 	// data from it
 	RingBufferDef *ring = (RingBufferDef*) args;
 
+	// Last incoming data timestamp
+	time_t lastDataTs = xTaskGetTickCount();
+
 	while(1) {
 		MutexLock(rf_mutex);
 		TickType_t taw = xTaskGetTickCount();
+
+		// If no data was received for the last x ms, assume that ntf24 is hung
+		if (taw - lastDataTs > MAX_SILENCE_TIME) {
+			NRF24_init();
+			lastDataTs = taw;
+		}
+
+
 		if (NRF24_available()) { // If nrf rx buffer have new data
 			uint8_t *payload = (uint8_t*) pmalloc(TX_PLOAD_WIDTH);
 			NRF24_Receive(payload); // Receive packet from nrf
 			for (int i = 0; i < TX_PLOAD_WIDTH; i++) { //Write packet payload to the downstream buffer
 				RINGS_write(payload[i], ring);
 			}
+			lastDataTs = taw;
 			pfree(payload);
 		}
 		MutexUnlock(rf_mutex);

@@ -42,6 +42,8 @@ void Transmitter_toRf(uint8_t *bin, uint16_t sbin) {
 void Transmitter_thread(void const * argument) {
 	LinkedBlockingQueue *queue = (LinkedBlockingQueue*) argument;
 
+	time_t lastTick = xTaskGetTickCount();
+
 	while(1) {
 		if (queue->size(queue) > 0) {
 			TransmitterQueueElem *elem = queue->dequeue(queue);
@@ -71,6 +73,25 @@ void Transmitter_thread(void const * argument) {
 			pfree(elem->data);
 			pfree(elem);
 		}
+
+		//Send tick peckets each 5 second to rf
+		if (xTaskGetTickCount() - lastTick > 30000) {
+			ExbPacket *packet = (ExbPacket*) pmalloc(sizeof(ExbPacket));
+			packet->preamble = EXB_PREAMBLE;
+			packet->tid = 1;
+			packet->type = EXB_TYPE_TICK;
+			packet->length = 0;
+			packet->body = NULL;
+			uint16_t sbin = 0;
+			uint8_t *bin = ExbPacket_toBinary(packet, &sbin);
+
+			Transmitter_toRf(bin, sbin);
+
+			lastTick = xTaskGetTickCount();
+			pfree(packet);
+			pfree(bin);
+		}
+
 		vTaskDelay(1);
 	}
 }
